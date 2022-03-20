@@ -1,88 +1,33 @@
 <?xml version="1.0" encoding="utf-8"?>
-<search>
-  <entry>
-    <title>Hello World</title>
-    <url>/2022/03/01/hello-world/</url>
-    <content><![CDATA[<p>Welcome to <a href="https://hexo.io/">Hexo</a>! This is your very first post. Check <a href="https://hexo.io/docs/">documentation</a> for more info. If you get any problems when using Hexo, you can find the answer in <a href="https://hexo.io/docs/troubleshooting.html">troubleshooting</a> or you can ask me on <a href="https://github.com/hexojs/hexo/issues">GitHub</a>.</p>
-<h2 id="Quick-Start"><a href="#Quick-Start" class="headerlink" title="Quick Start"></a>Quick Start</h2><h3 id="Create-a-new-post"><a href="#Create-a-new-post" class="headerlink" title="Create a new post"></a>Create a new post</h3><figure class="highlight bash"><table><tr><td class="code"><pre><span class="line">$ hexo new <span class="string">&quot;My New Post&quot;</span></span><br></pre></td></tr></table></figure>
-
-<p>More info: <a href="https://hexo.io/docs/writing.html">Writing</a></p>
-<h3 id="Run-server"><a href="#Run-server" class="headerlink" title="Run server"></a>Run server</h3><figure class="highlight bash"><table><tr><td class="code"><pre><span class="line">$ hexo server</span><br></pre></td></tr></table></figure>
-
-<p>More info: <a href="https://hexo.io/docs/server.html">Server</a></p>
-<h3 id="Generate-static-files"><a href="#Generate-static-files" class="headerlink" title="Generate static files"></a>Generate static files</h3><figure class="highlight bash"><table><tr><td class="code"><pre><span class="line">$ hexo generate</span><br></pre></td></tr></table></figure>
-
-<p>More info: <a href="https://hexo.io/docs/generating.html">Generating</a></p>
-<h3 id="Deploy-to-remote-sites"><a href="#Deploy-to-remote-sites" class="headerlink" title="Deploy to remote sites"></a>Deploy to remote sites</h3><figure class="highlight bash"><table><tr><td class="code"><pre><span class="line">$ hexo deploy</span><br></pre></td></tr></table></figure>
-
-<p>More info: <a href="https://hexo.io/docs/one-command-deployment.html">Deployment</a></p>
-]]></content>
-  </entry>
-  <entry>
-    <title>浅析DNS解析权重</title>
-    <url>/2022/03/15/%E6%B5%85%E6%9E%90DNS%E8%A7%A3%E6%9E%90%E6%9D%83%E9%87%8D/</url>
-    <content><![CDATA[<h1 id="前言："><a href="#前言：" class="headerlink" title="前言："></a>前言：</h1><p>本文针对权威DNS按比例返回域名解析记录实现访问流量调度的技术细节进行剖析</p>
-<p>针对该功能可能出现的一些常见问题进行深入分析</p>
-<p>对于该功能的使用提出最佳实践的探索</p>
-<span id="more"></span>
-
-<p>下文中所有的”LDNS”指递归DNS</p>
-<h2 id="功能说明"><a href="#功能说明" class="headerlink" title="功能说明"></a>功能说明</h2><p>DNS可以针对一个域名设置权重比例，按照预设的权重比例<strong>给LDNS</strong>返回不同的解析结果，继而将用户访问流量引流到不同的服务器&#x2F;集群上，达到<strong>负载均衡</strong>的目的。</p>
-<p><strong>前提条件：</strong>一个域名存在有2个或以上的IP地址才能设置权重比例</p>
-<p><strong>使用场景：</strong></p>
-<ul>
-<li>有两个服务集群分布在A、B两地，其中A服务集群处理能力为2G,B服务集群为4G，通过DNS权重比例分配功能引导访问流量，使得服务集群流量达到合理的比例。</li>
-<li>客户端访问流量较大，导致<strong>单台服务节点&#x2F;集群</strong>负载较高，增设新的服务节点&#x2F;集群，同时通过DNS权重比例分配功能引导访问流量，缓解流量压力</li>
-</ul>
-<h2 id="典型案例："><a href="#典型案例：" class="headerlink" title="典型案例："></a>典型案例：</h2><h3 id="调度概览"><a href="#调度概览" class="headerlink" title="调度概览"></a>调度概览</h3><p>1）在test.com权威DNS上进行如下权重配置：</p>
-<blockquote>
-<p>当将一个域名权重配置为2:1时，如下：</p>
-<p><a href="http://www.test.com/">www.test.com</a>   TTL：3600    权重:2   A记录：  1.1.1.1 </p>
-<p><a href="http://www.test.com/">www.test.com</a>   TTL：3600    权重:1   A记录：  2.2.2.2</p>
-</blockquote>
-<p>2）模拟三个不同区域用户DNS请求及业务流量访问：</p>
-<p><img src="/2022/03/15/%E6%B5%85%E6%9E%90DNS%E8%A7%A3%E6%9E%90%E6%9D%83%E9%87%8D/image-20220315131544418.png" alt="image-20220315131544418"></p>
-<p>（权威DNS按照1:2的比例给LDNS应答不同的结果，最终引流不同区域的客户端访问到指定的服务器上）</p>
-<h3 id="调度说明"><a href="#调度说明" class="headerlink" title="调度说明"></a>调度说明</h3><ol>
-<li>三个不同区域的客户端依次发起了<a href="http://www.test.com域名的访问,系统/%E6%B5%8F%E8%A7%88%E5%99%A8%E8%B0%83%E7%94%A8%E6%8E%A5%E5%8F%A3%E5%90%91LDNS%E5%8F%91%E8%B5%B7%E4%BA%86%E5%9F%9F%E5%90%8D%E8%A7%A3%E6%9E%90%E8%AF%B7%E6%B1%82">www.test.com域名的访问，系统/浏览器调用接口向LDNS发起了域名解析请求</a></li>
-<li>三个不同区域LDNS依次收到解析请求后向权威DNS发起<a href="http://www.test.com域名解析请求/">www.test.com域名解析请求</a></li>
-<li>权威DNS根据自身算法，匹配到<a href="http://www.test.com的权重为2:1，前两次请求应答1.1.1.1，后1次请求应答2.2.2.2">www.test.com的权重为2:1，前两次请求应答1.1.1.1，后1次请求应答2.2.2.2</a></li>
-<li>三个不同区域客户端各自收到域名解析结果后，A、B客户端向服务器A:1.1.1.1发起连接，B客户端向服务器B:1.1.1.1发起连接</li>
-</ol>
-<h1 id="常见问题"><a href="#常见问题" class="headerlink" title="常见问题"></a>常见问题</h1><h2 id="负载不均衡"><a href="#负载不均衡" class="headerlink" title="负载不均衡"></a>负载不均衡</h2><p>在实际使用过程中，偶尔会发现应用服务器的访问流量并没有符合我们在DNS上预设的权重比例，其中影响的因素是多种多样的，这里针对两个最常见的场景进行剖析</p>
-<h3 id="TTL缓存导致"><a href="#TTL缓存导致" class="headerlink" title="TTL缓存导致"></a>TTL缓存导致</h3><p>不同区域的LDNS我们无法得知，可能不同运营商之间、省份之间、DNS品牌不同，他们LDNS的<strong>递归机制</strong>也不尽相同。 这里主要影响DNS解析权重效果的是LDNS对于<strong>TTL缓存时间</strong>的处理：在单个域名的TTL缓存中，LDNS收到该域名的解析请求后，不会再向权威DNS进行解析请求，而是直接将缓存的结果应答给客户端。</p>
-<blockquote>
-<p>一般情况下：LDNS会遵循权威DNS给出应答的TTL值，在本地缓存指定的时间。</p>
-<p>特殊情况下：LDNS针对TTL缓存具有自治的逻辑，举个例子：针对TTL最大不超过3600，最小TTL不小于60，超过这个范围的则强制修改为自身设定的最大&#x2F;最小TTL。 （每个LDNS的自治情况不得而知，这里举个例子）</p>
-</blockquote>
-<p>我们<strong>假设三个区域的客户端相同，且发起的请求频次也相同</strong>，但是<strong>其中一台LDNS的TTL缓存机制较为特殊</strong>，来分析一下如何导致的解析流量不均衡：<img src="/2022/03/15/%E6%B5%85%E6%9E%90DNS%E8%A7%A3%E6%9E%90%E6%9D%83%E9%87%8D/image-20220315094836107.png" alt="image-20220315094836107"></p>
-<p>权威DNS配置不变：</p>
-<p>1）test.com权威DNS上有如下权重配置：</p>
-<blockquote>
-<p>当将一个域名权重配置为2:1时，如下：</p>
-<p><a href="http://www.test.com/">www.test.com</a>   TTL：3600    权重:2   A记录：  1.1.1.1 </p>
-<p><a href="http://www.test.com/">www.test.com</a>   TTL：3600    权重:1   A记录：  2.2.2.2</p>
-</blockquote>
-<p>2）假设已经有了一轮请求，让区域ABC区域的LDNS已经在缓存了解析结果，但是<strong>区域C的LDNS缓存存在特殊机制，将TTL强制修改为300秒</strong></p>
-<p>3）在3600s内，区域A、B的客户端按照正常的调度，一直正常向服务器A:1.1.1.1发起了访问</p>
-<p>4）而区域C的LDNS在300s后<strong>因为缓存过期</strong>，进而重新向权威DNS请求得到1.1.1.1的结果，导致客户端C也向服务器A:1.1.1.1发起访问，导致流量不均衡。</p>
-<h3 id="单个区域内访问频次过高导致"><a href="#单个区域内访问频次过高导致" class="headerlink" title="单个区域内访问频次过高导致"></a>单个区域内访问频次过高导致</h3><p>由权威DNS的权重比例调度规则我们可知：权威解析针对<strong>LDNS访问总次数</strong>来进行权重比例调度解析的。</p>
-<p>如果在真实的业务访问中，在<strong>一个区域内</strong>的<strong>客户端数量</strong>，或者<strong>客户端访问次数</strong>，相比其他所有的区域访问量都高的话，那么可能存在业务侧流量不均衡的现象，如下图：</p>
-<p><img src="/2022/03/15/%E6%B5%85%E6%9E%90DNS%E8%A7%A3%E6%9E%90%E6%9D%83%E9%87%8D/image-20220315131056494.png" alt="image-20220315131056494"></p>
-<p>（这里假设一个区域内的客户端数量相对较多）</p>
-<p>相对区域A、B而言，这里区域C中的<strong>客户端数量更多</strong>，且都使用的是同一个LDNS</p>
-<p>由于LDNS存在一定时间的缓存，大量的客户端得到的解析结果为2.2.2.2,客户端集群-c向服务器B:2.2.2.2发起了大量的访问，导致流量不均衡。</p>
-<p><strong>同样类似的场景，可以衍生为同一个区域内的单个&#x2F;多个客户端发起数量较大的访问次数，进而导致流量不均衡，这里不做赘述。</strong></p>
-<h3 id="小结"><a href="#小结" class="headerlink" title="小结"></a>小结</h3><p>负载不均衡的问题需要结合实际的情况进行分析：其中包含<strong>单&#x2F;多个区域</strong>大的范畴，也包含区域内<strong>LDNS自治的缓存逻辑</strong>、客户端的<strong>群体数量</strong>、单个客户端的<strong>访问频次</strong>小的范畴。</p>
-<p>除了上述大小范畴，还包含各种特殊的细节，例如请求长链接、客户端缓存机制等场景，多者相互影响、相互渗透、相互作用，这就需我们使用<strong>具体问题具体分析</strong>的方法，找出问题的根本原因并加以解决。</p>
-<h1 id="最佳实践探索"><a href="#最佳实践探索" class="headerlink" title="最佳实践探索"></a>最佳实践探索</h1><p>使用DNS的权重比例功能，并不能完全保证两台机器&#x2F;集群流量的<strong>完全一致</strong>，只能是一个“粗粒度”的<strong>域名解析流量调度</strong>，并不是像负载均衡那样<strong>基于会话、连接的调度</strong>，如果想要实现完全一致的调度建议使用专业的负载均衡设备或组件</p>
-<p>虽然DNS按权重比例是“粗粒度”的，但是目前而言在多数据中心容灾、双活、多活等场景下基于DNS调度是目前较好的方式，且应用范围最广，下面对使用该功能提出几点最佳实践探索的建议：</p>
-<p>1)在权威DNS上设置的按权重比例调度的域名TTL保持一致，如下：</p>
-<blockquote>
-<p><a href="http://www.test.com/">www.test.com</a>   <strong>TTL：3600</strong>    权重:2   A记录：  1.1.1.1 </p>
-<p><a href="http://www.test.com/">www.test.com</a>   <strong>TTL：3600</strong>    权重:1   A记录：  2.2.2.2</p>
-</blockquote>
-<p>2)权重比例调度的域名TTL最小不超过60S，最大不超过3600s</p>
-]]></content>
-  </entry>
+<search> 
+  
+  
+    
+    <entry>
+      <title>浅析DNS解析权重</title>
+      <link href="/2022/03/15/%E6%B5%85%E6%9E%90DNS%E8%A7%A3%E6%9E%90%E6%9D%83%E9%87%8D/"/>
+      <url>/2022/03/15/%E6%B5%85%E6%9E%90DNS%E8%A7%A3%E6%9E%90%E6%9D%83%E9%87%8D/</url>
+      
+        <content type="html"><![CDATA[<h1 id="前言："><a href="#前言：" class="headerlink" title="前言："></a>前言：</h1><p>本文针对权威DNS按比例返回域名解析记录实现访问流量调度的技术细节进行剖析</p><p>针对该功能可能出现的一些常见问题进行深入分析</p><p>对于该功能的使用提出最佳实践的探索</p><span id="more"></span><p>下文中所有的”LDNS”指递归DNS</p><h2 id="功能说明"><a href="#功能说明" class="headerlink" title="功能说明"></a>功能说明</h2><p>DNS可以针对一个域名设置权重比例，按照预设的权重比例<strong>给LDNS</strong>返回不同的解析结果，继而将用户访问流量引流到不同的服务器&#x2F;集群上，达到<strong>负载均衡</strong>的目的。</p><p><strong>前提条件：</strong>一个域名存在有2个或以上的IP地址才能设置权重比例</p><p><strong>使用场景：</strong></p><ul><li>有两个服务集群分布在A、B两地，其中A服务集群处理能力为2G,B服务集群为4G，通过DNS权重比例分配功能引导访问流量，使得服务集群流量达到合理的比例。</li><li>客户端访问流量较大，导致<strong>单台服务节点&#x2F;集群</strong>负载较高，增设新的服务节点&#x2F;集群，同时通过DNS权重比例分配功能引导访问流量，缓解流量压力</li></ul><h2 id="典型案例："><a href="#典型案例：" class="headerlink" title="典型案例："></a>典型案例：</h2><h3 id="调度概览"><a href="#调度概览" class="headerlink" title="调度概览"></a>调度概览</h3><p>1）在test.com权威DNS上进行如下权重配置：</p><blockquote><p>当将一个域名权重配置为2:1时，如下：</p><p><a href="http://www.test.com/">www.test.com</a>   TTL：3600    权重:2   A记录：  1.1.1.1 </p><p><a href="http://www.test.com/">www.test.com</a>   TTL：3600    权重:1   A记录：  2.2.2.2</p></blockquote><p>2）模拟三个不同区域用户DNS请求及业务流量访问：</p><p><img src="/2022/03/15/%E6%B5%85%E6%9E%90DNS%E8%A7%A3%E6%9E%90%E6%9D%83%E9%87%8D/image-20220315131544418.png" alt="image-20220315131544418"></p><p>（权威DNS按照1:2的比例给LDNS应答不同的结果，最终引流不同区域的客户端访问到指定的服务器上）</p><h3 id="调度说明"><a href="#调度说明" class="headerlink" title="调度说明"></a>调度说明</h3><ol><li>三个不同区域的客户端依次发起了<a href="http://www.test.com域名的访问,系统/%E6%B5%8F%E8%A7%88%E5%99%A8%E8%B0%83%E7%94%A8%E6%8E%A5%E5%8F%A3%E5%90%91LDNS%E5%8F%91%E8%B5%B7%E4%BA%86%E5%9F%9F%E5%90%8D%E8%A7%A3%E6%9E%90%E8%AF%B7%E6%B1%82">www.test.com域名的访问，系统/浏览器调用接口向LDNS发起了域名解析请求</a></li><li>三个不同区域LDNS依次收到解析请求后向权威DNS发起<a href="http://www.test.com域名解析请求/">www.test.com域名解析请求</a></li><li>权威DNS根据自身算法，匹配到<a href="http://www.test.com的权重为2:1，前两次请求应答1.1.1.1，后1次请求应答2.2.2.2">www.test.com的权重为2:1，前两次请求应答1.1.1.1，后1次请求应答2.2.2.2</a></li><li>三个不同区域客户端各自收到域名解析结果后，A、B客户端向服务器A:1.1.1.1发起连接，B客户端向服务器B:1.1.1.1发起连接</li></ol><h1 id="常见问题"><a href="#常见问题" class="headerlink" title="常见问题"></a>常见问题</h1><h2 id="负载不均衡"><a href="#负载不均衡" class="headerlink" title="负载不均衡"></a>负载不均衡</h2><p>在实际使用过程中，偶尔会发现应用服务器的访问流量并没有符合我们在DNS上预设的权重比例，其中影响的因素是多种多样的，这里针对两个最常见的场景进行剖析</p><h3 id="TTL缓存导致"><a href="#TTL缓存导致" class="headerlink" title="TTL缓存导致"></a>TTL缓存导致</h3><p>不同区域的LDNS我们无法得知，可能不同运营商之间、省份之间、DNS品牌不同，他们LDNS的<strong>递归机制</strong>也不尽相同。 这里主要影响DNS解析权重效果的是LDNS对于<strong>TTL缓存时间</strong>的处理：在单个域名的TTL缓存中，LDNS收到该域名的解析请求后，不会再向权威DNS进行解析请求，而是直接将缓存的结果应答给客户端。</p><blockquote><p>一般情况下：LDNS会遵循权威DNS给出应答的TTL值，在本地缓存指定的时间。</p><p>特殊情况下：LDNS针对TTL缓存具有自治的逻辑，举个例子：针对TTL最大不超过3600，最小TTL不小于60，超过这个范围的则强制修改为自身设定的最大&#x2F;最小TTL。 （每个LDNS的自治情况不得而知，这里举个例子）</p></blockquote><p>我们<strong>假设三个区域的客户端相同，且发起的请求频次也相同</strong>，但是<strong>其中一台LDNS的TTL缓存机制较为特殊</strong>，来分析一下如何导致的解析流量不均衡：<img src="/2022/03/15/%E6%B5%85%E6%9E%90DNS%E8%A7%A3%E6%9E%90%E6%9D%83%E9%87%8D/image-20220315094836107.png" alt="image-20220315094836107"></p><p>权威DNS配置不变：</p><p>1）test.com权威DNS上有如下权重配置：</p><blockquote><p>当将一个域名权重配置为2:1时，如下：</p><p><a href="http://www.test.com/">www.test.com</a>   TTL：3600    权重:2   A记录：  1.1.1.1 </p><p><a href="http://www.test.com/">www.test.com</a>   TTL：3600    权重:1   A记录：  2.2.2.2</p></blockquote><p>2）假设已经有了一轮请求，让区域ABC区域的LDNS已经在缓存了解析结果，但是<strong>区域C的LDNS缓存存在特殊机制，将TTL强制修改为300秒</strong></p><p>3）在3600s内，区域A、B的客户端按照正常的调度，一直正常向服务器A:1.1.1.1发起了访问</p><p>4）而区域C的LDNS在300s后<strong>因为缓存过期</strong>，进而重新向权威DNS请求得到1.1.1.1的结果，导致客户端C也向服务器A:1.1.1.1发起访问，导致流量不均衡。</p><h3 id="单个区域内访问频次过高导致"><a href="#单个区域内访问频次过高导致" class="headerlink" title="单个区域内访问频次过高导致"></a>单个区域内访问频次过高导致</h3><p>由权威DNS的权重比例调度规则我们可知：权威解析针对<strong>LDNS访问总次数</strong>来进行权重比例调度解析的。</p><p>如果在真实的业务访问中，在<strong>一个区域内</strong>的<strong>客户端数量</strong>，或者<strong>客户端访问次数</strong>，相比其他所有的区域访问量都高的话，那么可能存在业务侧流量不均衡的现象，如下图：</p><p><img src="/2022/03/15/%E6%B5%85%E6%9E%90DNS%E8%A7%A3%E6%9E%90%E6%9D%83%E9%87%8D/image-20220315131056494.png" alt="image-20220315131056494"></p><p>（这里假设一个区域内的客户端数量相对较多）</p><p>相对区域A、B而言，这里区域C中的<strong>客户端数量更多</strong>，且都使用的是同一个LDNS</p><p>由于LDNS存在一定时间的缓存，大量的客户端得到的解析结果为2.2.2.2,客户端集群-c向服务器B:2.2.2.2发起了大量的访问，导致流量不均衡。</p><p><strong>同样类似的场景，可以衍生为同一个区域内的单个&#x2F;多个客户端发起数量较大的访问次数，进而导致流量不均衡，这里不做赘述。</strong></p><h3 id="小结"><a href="#小结" class="headerlink" title="小结"></a>小结</h3><p>负载不均衡的问题需要结合实际的情况进行分析：其中包含<strong>单&#x2F;多个区域</strong>大的范畴，也包含区域内<strong>LDNS自治的缓存逻辑</strong>、客户端的<strong>群体数量</strong>、单个客户端的<strong>访问频次</strong>小的范畴。</p><p>除了上述大小范畴，还包含各种特殊的细节，例如请求长链接、客户端缓存机制等场景，多者相互影响、相互渗透、相互作用，这就需我们使用<strong>具体问题具体分析</strong>的方法，找出问题的根本原因并加以解决。</p><h1 id="最佳实践探索"><a href="#最佳实践探索" class="headerlink" title="最佳实践探索"></a>最佳实践探索</h1><p>使用DNS的权重比例功能，并不能完全保证两台机器&#x2F;集群流量的<strong>完全一致</strong>，只能是一个“粗粒度”的<strong>域名解析流量调度</strong>，并不是像负载均衡那样<strong>基于会话、连接的调度</strong>，如果想要实现完全一致的调度建议使用专业的负载均衡设备或组件</p><p>虽然DNS按权重比例是“粗粒度”的，但是目前而言在多数据中心容灾、双活、多活等场景下基于DNS调度是目前较好的方式，且应用范围最广，下面对使用该功能提出几点最佳实践探索的建议：</p><p>1)在权威DNS上设置的按权重比例调度的域名TTL保持一致，如下：</p><blockquote><p><a href="http://www.test.com/">www.test.com</a>   <strong>TTL：3600</strong>    权重:2   A记录：  1.1.1.1 </p><p><a href="http://www.test.com/">www.test.com</a>   <strong>TTL：3600</strong>    权重:1   A记录：  2.2.2.2</p></blockquote><p>2)权重比例调度的域名TTL最小不超过60S，最大不超过3600s</p>]]></content>
+      
+      
+      
+    </entry>
+    
+    
+    
+    <entry>
+      <title>Hello World</title>
+      <link href="/2022/03/01/hello-world/"/>
+      <url>/2022/03/01/hello-world/</url>
+      
+        <content type="html"><![CDATA[<p>Welcome to <a href="https://hexo.io/">Hexo</a>! This is your very first post. Check <a href="https://hexo.io/docs/">documentation</a> for more info. If you get any problems when using Hexo, you can find the answer in <a href="https://hexo.io/docs/troubleshooting.html">troubleshooting</a> or you can ask me on <a href="https://github.com/hexojs/hexo/issues">GitHub</a>.</p><h2 id="Quick-Start"><a href="#Quick-Start" class="headerlink" title="Quick Start"></a>Quick Start</h2><h3 id="Create-a-new-post"><a href="#Create-a-new-post" class="headerlink" title="Create a new post"></a>Create a new post</h3><figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">$ hexo new <span class="string">&quot;My New Post&quot;</span></span><br></pre></td></tr></table></figure><p>More info: <a href="https://hexo.io/docs/writing.html">Writing</a></p><h3 id="Run-server"><a href="#Run-server" class="headerlink" title="Run server"></a>Run server</h3><figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">$ hexo server</span><br></pre></td></tr></table></figure><p>More info: <a href="https://hexo.io/docs/server.html">Server</a></p><h3 id="Generate-static-files"><a href="#Generate-static-files" class="headerlink" title="Generate static files"></a>Generate static files</h3><figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">$ hexo generate</span><br></pre></td></tr></table></figure><p>More info: <a href="https://hexo.io/docs/generating.html">Generating</a></p><h3 id="Deploy-to-remote-sites"><a href="#Deploy-to-remote-sites" class="headerlink" title="Deploy to remote sites"></a>Deploy to remote sites</h3><figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">$ hexo deploy</span><br></pre></td></tr></table></figure><p>More info: <a href="https://hexo.io/docs/one-command-deployment.html">Deployment</a></p>]]></content>
+      
+      
+      
+    </entry>
+    
+    
+  
+  
 </search>
