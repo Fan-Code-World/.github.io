@@ -1,0 +1,692 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=2">
+<meta name="theme-color" content="#222">
+<meta name="generator" content="Hexo 6.0.0">
+  <link rel="apple-touch-icon" sizes="180x180" href="/images/airplane.png">
+  <link rel="icon" type="image/png" sizes="32x32" href="/images/airplane-32x32.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="/images/airplane-16x16.png">
+  <link rel="mask-icon" href="/images/logo.svg" color="#222">
+
+<link rel="stylesheet" href="/css/main.css">
+
+<link rel="stylesheet" href="//fonts.googleapis.com/css?family=Lato:300,300italic,400,400italic,700,700italic&display=swap&subset=latin,latin-ext">
+<link rel="stylesheet" href="/lib/font-awesome/css/all.min.css">
+  <link rel="stylesheet" href="//cdn.jsdelivr.net/gh/fancyapps/fancybox@3/dist/jquery.fancybox.min.css">
+  <link rel="stylesheet" href="/lib/pace/pace-theme-minimal.min.css">
+  <script src="/lib/pace/pace.min.js"></script>
+
+<script id="hexo-configurations">
+    var NexT = window.NexT || {};
+    var CONFIG = {"hostname":"www.abchina.space","root":"/","scheme":"Gemini","version":"7.8.0","exturl":false,"sidebar":{"position":"left","display":"post","padding":18,"offset":12,"onmobile":false},"copycode":{"enable":false,"show_result":false,"style":null},"back2top":{"enable":true,"sidebar":false,"scrollpercent":false},"bookmark":{"enable":false,"color":"#222","save":"auto"},"fancybox":true,"mediumzoom":false,"lazyload":false,"pangu":false,"comments":{"style":"tabs","active":null,"storage":true,"lazyload":false,"nav":null},"algolia":{"hits":{"per_page":10},"labels":{"input_placeholder":"Search for Posts","hits_empty":"We didn't find any results for the search: ${query}","hits_stats":"${hits} results found in ${time} ms"}},"localsearch":{"enable":true,"trigger":"auto","top_n_per_article":1,"unescape":false,"preload":false},"motion":{"enable":true,"async":false,"transition":{"post_block":"fadeIn","post_header":"slideDownIn","post_body":"slideDownIn","coll_header":"slideLeftIn","sidebar":"slideUpIn"}},"path":"search.xml"};
+  </script>
+
+  <meta name="description" content="前言：本文针对根域名同时实现MX&amp;CNAME记录配置可能产生的风险的技术细节进行剖析 针对可能出现的问题风险提出优化办法 对于该问题的解决提出最佳实践的探索">
+<meta property="og:type" content="article">
+<meta property="og:title" content="MX&amp;CNAME记录冲突问题探究">
+<meta property="og:url" content="https://www.abchina.space/2022/05/08/MX&CNAME%E8%AE%B0%E5%BD%95%E5%86%B2%E7%AA%81%E9%97%AE%E9%A2%98%E6%80%9D%E8%80%83/index.html">
+<meta property="og:site_name" content="Fango blog">
+<meta property="og:description" content="前言：本文针对根域名同时实现MX&amp;CNAME记录配置可能产生的风险的技术细节进行剖析 针对可能出现的问题风险提出优化办法 对于该问题的解决提出最佳实践的探索">
+<meta property="og:locale" content="zh_CN">
+<meta property="og:image" content="https://www.abchina.space/2022/05/08/MX&CNAME%E8%AE%B0%E5%BD%95%E5%86%B2%E7%AA%81%E9%97%AE%E9%A2%98%E6%80%9D%E8%80%83/Users/fango/AppData/Roaming/Typora/typora-user-images/image-20220505160434827.png">
+<meta property="og:image" content="https://www.abchina.space/2022/05/08/MX&CNAME%E8%AE%B0%E5%BD%95%E5%86%B2%E7%AA%81%E9%97%AE%E9%A2%98%E6%80%9D%E8%80%83/Users/fango/AppData/Roaming/Typora/typora-user-images/image-20220505160718812.png">
+<meta property="og:image" content="https://www.abchina.space/2022/05/08/MX&CNAME%E8%AE%B0%E5%BD%95%E5%86%B2%E7%AA%81%E9%97%AE%E9%A2%98%E6%80%9D%E8%80%83/Users/fango/AppData/Roaming/Typora/typora-user-images/image-20220505170510998.png">
+<meta property="og:image" content="https://www.abchina.space/2022/05/08/MX&CNAME%E8%AE%B0%E5%BD%95%E5%86%B2%E7%AA%81%E9%97%AE%E9%A2%98%E6%80%9D%E8%80%83/Users/fango/AppData/Roaming/Typora/typora-user-images/image-20220505161930305.png">
+<meta property="article:published_time" content="2022-05-08T15:40:07.000Z">
+<meta property="article:modified_time" content="2022-05-08T16:05:22.653Z">
+<meta property="article:author" content="Fango">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:image" content="https://www.abchina.space/2022/05/08/MX&CNAME%E8%AE%B0%E5%BD%95%E5%86%B2%E7%AA%81%E9%97%AE%E9%A2%98%E6%80%9D%E8%80%83/Users/fango/AppData/Roaming/Typora/typora-user-images/image-20220505160434827.png">
+
+<link rel="canonical" href="https://www.abchina.space/2022/05/08/MX&CNAME%E8%AE%B0%E5%BD%95%E5%86%B2%E7%AA%81%E9%97%AE%E9%A2%98%E6%80%9D%E8%80%83/">
+
+
+<script id="page-configurations">
+  // https://hexo.io/docs/variables.html
+  CONFIG.page = {
+    sidebar: "",
+    isHome : false,
+    isPost : true,
+    lang   : 'zh-CN'
+  };
+</script>
+
+  <title>MX&CNAME记录冲突问题探究 | Fango blog</title>
+  
+
+
+  <script>
+    var _hmt = _hmt || [];
+    (function() {
+      var hm = document.createElement("script");
+      hm.src = "https://hm.baidu.com/hm.js?0d077c6d7a198b0947c16725abeeb784";
+      var s = document.getElementsByTagName("script")[0];
+      s.parentNode.insertBefore(hm, s);
+    })();
+  </script>
+
+
+
+
+  <noscript>
+  <style>
+  .use-motion .brand,
+  .use-motion .menu-item,
+  .sidebar-inner,
+  .use-motion .post-block,
+  .use-motion .pagination,
+  .use-motion .comments,
+  .use-motion .post-header,
+  .use-motion .post-body,
+  .use-motion .collection-header { opacity: initial; }
+
+  .use-motion .site-title,
+  .use-motion .site-subtitle {
+    opacity: initial;
+    top: initial;
+  }
+
+  .use-motion .logo-line-before i { left: initial; }
+  .use-motion .logo-line-after i { right: initial; }
+  </style>
+</noscript>
+
+</head>
+
+<body itemscope itemtype="http://schema.org/WebPage">
+  <div class="container use-motion">
+    <div class="headband"></div>
+
+    <header class="header" itemscope itemtype="http://schema.org/WPHeader">
+      <div class="header-inner"><div class="site-brand-container">
+  <div class="site-nav-toggle">
+    <div class="toggle" aria-label="切换导航栏">
+      <span class="toggle-line toggle-line-first"></span>
+      <span class="toggle-line toggle-line-middle"></span>
+      <span class="toggle-line toggle-line-last"></span>
+    </div>
+  </div>
+
+  <div class="site-meta">
+
+    <a href="/" class="brand" rel="start">
+      <span class="logo-line-before"><i></i></span>
+      <h1 class="site-title">Fango blog</h1>
+      <span class="logo-line-after"><i></i></span>
+    </a>
+  </div>
+
+  <div class="site-nav-right">
+    <div class="toggle popup-trigger">
+        <i class="fa fa-search fa-fw fa-lg"></i>
+    </div>
+  </div>
+</div>
+
+
+
+
+<nav class="site-nav">
+  <ul id="menu" class="main-menu menu">
+        <li class="menu-item menu-item-home">
+
+    <a href="/" rel="section"><i class="fa fa-home fa-fw"></i>首页</a>
+
+  </li>
+        <li class="menu-item menu-item-about">
+
+    <a href="/about/" rel="section"><i class="fa fa-user fa-fw"></i>关于</a>
+
+  </li>
+        <li class="menu-item menu-item-tags">
+
+    <a href="/tags/" rel="section"><i class="fa fa-tags fa-fw"></i>标签<span class="badge">0</span></a>
+
+  </li>
+        <li class="menu-item menu-item-categories">
+
+    <a href="/categories/" rel="section"><i class="fa fa-th fa-fw"></i>分类<span class="badge">0</span></a>
+
+  </li>
+        <li class="menu-item menu-item-archives">
+
+    <a href="/archives/" rel="section"><i class="fa fa-archive fa-fw"></i>归档<span class="badge">3</span></a>
+
+  </li>
+        <li class="menu-item menu-item-schedule">
+
+    <a href="/schedule/" rel="section"><i class="fa fa-calendar fa-fw"></i>日程表</a>
+
+  </li>
+        <li class="menu-item menu-item-sitemap">
+
+    <a href="/sitemap.xml" rel="section"><i class="fa fa-sitemap fa-fw"></i>站点地图</a>
+
+  </li>
+        <li class="menu-item menu-item-commonweal">
+
+    <a href="/404/" rel="section"><i class="fa fa-heartbeat fa-fw"></i>公益 404</a>
+
+  </li>
+      <li class="menu-item menu-item-search">
+        <a role="button" class="popup-trigger"><i class="fa fa-search fa-fw"></i>搜索
+        </a>
+      </li>
+  </ul>
+</nav>
+
+
+
+  <div class="search-pop-overlay">
+    <div class="popup search-popup">
+        <div class="search-header">
+  <span class="search-icon">
+    <i class="fa fa-search"></i>
+  </span>
+  <div class="search-input-container">
+    <input autocomplete="off" autocapitalize="off"
+           placeholder="搜索..." spellcheck="false"
+           type="search" class="search-input">
+  </div>
+  <span class="popup-btn-close">
+    <i class="fa fa-times-circle"></i>
+  </span>
+</div>
+<div id="search-result">
+  <div id="no-result">
+    <i class="fa fa-spinner fa-pulse fa-5x fa-fw"></i>
+  </div>
+</div>
+
+    </div>
+  </div>
+
+</div>
+    </header>
+
+    
+  <div class="back-to-top">
+    <i class="fa fa-arrow-up"></i>
+    <span>0%</span>
+  </div>
+
+
+    <main class="main">
+      <div class="main-inner">
+        <div class="content-wrap">
+          
+
+          <div class="content post posts-expand">
+            
+
+    
+  
+  
+  <article itemscope itemtype="http://schema.org/Article" class="post-block" lang="zh-CN">
+    <link itemprop="mainEntityOfPage" href="https://www.abchina.space/2022/05/08/MX&CNAME%E8%AE%B0%E5%BD%95%E5%86%B2%E7%AA%81%E9%97%AE%E9%A2%98%E6%80%9D%E8%80%83/">
+
+    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
+      <meta itemprop="image" content="/images/cat.jpg">
+      <meta itemprop="name" content="Fango">
+      <meta itemprop="description" content="Books are the ladder of human progress">
+    </span>
+
+    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
+      <meta itemprop="name" content="Fango blog">
+    </span>
+      <header class="post-header">
+        <h1 class="post-title" itemprop="name headline">
+          MX&CNAME记录冲突问题探究
+        </h1>
+
+        <div class="post-meta">
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="far fa-calendar"></i>
+              </span>
+              <span class="post-meta-item-text">发表于</span>
+
+              <time title="创建时间：2022-05-08 23:40:07" itemprop="dateCreated datePublished" datetime="2022-05-08T23:40:07+08:00">2022-05-08</time>
+            </span>
+              <span class="post-meta-item">
+                <span class="post-meta-item-icon">
+                  <i class="far fa-calendar-check"></i>
+                </span>
+                <span class="post-meta-item-text">更新于</span>
+                <time title="修改时间：2022-05-09 00:05:22" itemprop="dateModified" datetime="2022-05-09T00:05:22+08:00">2022-05-09</time>
+              </span>
+
+          
+            <span id="/2022/05/08/MX&CNAME%E8%AE%B0%E5%BD%95%E5%86%B2%E7%AA%81%E9%97%AE%E9%A2%98%E6%80%9D%E8%80%83/" class="post-meta-item leancloud_visitors" data-flag-title="MX&CNAME记录冲突问题探究" title="阅读次数">
+              <span class="post-meta-item-icon">
+                <i class="fa fa-eye"></i>
+              </span>
+              <span class="post-meta-item-text">阅读次数：</span>
+              <span class="leancloud-visitors-count"></span>
+            </span>
+  
+  <span class="post-meta-item">
+    
+      <span class="post-meta-item-icon">
+        <i class="far fa-comment"></i>
+      </span>
+      <span class="post-meta-item-text">Valine：</span>
+    
+    <a title="valine" href="/2022/05/08/MX&CNAME%E8%AE%B0%E5%BD%95%E5%86%B2%E7%AA%81%E9%97%AE%E9%A2%98%E6%80%9D%E8%80%83/#valine-comments" itemprop="discussionUrl">
+      <span class="post-comments-count valine-comment-count" data-xid="/2022/05/08/MX&CNAME%E8%AE%B0%E5%BD%95%E5%86%B2%E7%AA%81%E9%97%AE%E9%A2%98%E6%80%9D%E8%80%83/" itemprop="commentCount"></span>
+    </a>
+  </span>
+  
+  
+
+        </div>
+      </header>
+
+    
+    
+    
+    <div class="post-body" itemprop="articleBody">
+
+      
+        <h1 id="前言："><a href="#前言：" class="headerlink" title="前言："></a>前言：</h1><p>本文针对根域名同时实现MX&amp;CNAME记录配置可能产生的风险的技术细节进行剖析</p>
+<p>针对可能出现的问题风险提出优化办法</p>
+<p>对于该问题的解决提出最佳实践的探索</p>
+<span id="more"></span>
+
+<h1 id="问题背景"><a href="#问题背景" class="headerlink" title="问题背景"></a>问题背景</h1><h2 id="主要需求-amp-DNS实现"><a href="#主要需求-amp-DNS实现" class="headerlink" title="主要需求&amp;DNS实现"></a>主要需求&amp;DNS实现</h2><ul>
+<li>需要使用<strong>主域名</strong>配置MX记录，实现邮件系统的寻址功能。</li>
+<li>需要将主域名配置CNAME记录，达到接入CDN实现网站加速&#x2F;安全加固等目的。</li>
+</ul>
+<p>假设有域名abc.com想要实现如上需求，邮件系统指向腾讯企业邮：mxbiz1.qq.com，CNAME指向网宿CDN，abc.com.wscdns.com.</p>
+<p>DNS配置:</p>
+<table>
+<thead>
+<tr>
+<th>主机记录</th>
+<th>记录类型</th>
+<th>记录值</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>@</td>
+<td>MX</td>
+<td>mxbiz1.qq.com.</td>
+</tr>
+<tr>
+<td>@</td>
+<td>CNAME</td>
+<td>abc.com.wscdns.com.</td>
+</tr>
+</tbody></table>
+<h2 id="DNS技术实现风险揭示"><a href="#DNS技术实现风险揭示" class="headerlink" title="DNS技术实现风险揭示"></a>DNS技术实现风险揭示</h2><p>如上所示的DNS配置确实可以满足绝大部分情况下的用户需求，但是可能会在<strong>部分特殊情况</strong>下导致MX记录无法被解析，进而影响邮件收发。下面针对该种配置的错误及技术原理进行剖析。</p>
+<p>主要剖析当CNAME记录先于MX记录被递归DNS缓存情况下的问题细节。</p>
+<h3 id="违反的RFC说明"><a href="#违反的RFC说明" class="headerlink" title="违反的RFC说明"></a>违反的RFC说明</h3><p><strong>直接证明配置违反规范的说明：</strong></p>
+<p>如果一个域名节点（泛指一个域名）存在CNAME 记录类型，则<strong>不应再存在</strong>其他DNS记录类型；</p>
+<p>如果递归DNS发现该域名存在CNAME，则<strong>无需再向</strong>权威服务器检查其他RR类型；</p>
+<p>​        RFC1034原文链接及3.6.2片段如下：</p>
+<blockquote>
+<p><a target="_blank" rel="noopener" href="https://datatracker.ietf.org/doc/html/rfc1034">https://datatracker.ietf.org/doc/html/rfc1034</a>:</p>
+<p>If a CNAME RR is present at a node, no other data should be present;     ……</p>
+<p>This rule also insures that a cached CNAME can be used without checking with an authoritative server for other RR types.</p>
+</blockquote>
+<p><strong>当域名存在CNAME时，建议递归DNS的行为：</strong></p>
+<p>CNAME RRs会在DNS软件中引发特殊操作。当名称服务器无法在与域名关联的资源集中找到所需的RR时，它会检查资源集是否包含具有匹配类的CNAME记录。如果是这样，名称服务器会在响应中包含CNAME记录，并在CNAME记录的数据字段中指定的域名处重新启动查询。此规则的一个例外是，与CNAME类型匹配的查询不会重新启动。）</p>
+<p>​    RFC1034原文链接及3.6.2片段如下：</p>
+<blockquote>
+<p><a target="_blank" rel="noopener" href="https://datatracker.ietf.org/doc/html/rfc1034">https://datatracker.ietf.org/doc/html/rfc1034</a>:</p>
+<p>CNAME RRs cause special action in DNS software.  When a name server fails to find a desired RR in the resource set associated with the domain name, it checks to see if the resource set consists of a CNAME record with a matching class.  If so, the name server includes the CNAME record in the response and restarts the query at the domain name specified in the data field of the CNAME record.  The one exception to this rule is that queries which match the CNAME type are not restarted.</p>
+</blockquote>
+<h3 id="风险技术细节推导"><a href="#风险技术细节推导" class="headerlink" title="风险技术细节推导"></a>风险技术细节推导</h3><p>正常解析场景：</p>
+<p><strong>图待补充</strong></p>
+<p>之所以大部分情况下不会触发这种问题，是由于递归DNS上原先不存在该域名节点的CNAME记录，从而收到MX记录其请求时，可以正常向域名权威DNS发起解析请求</p>
+<p><img src="/2022/05/08/MX&CNAME%E8%AE%B0%E5%BD%95%E5%86%B2%E7%AA%81%E9%97%AE%E9%A2%98%E6%80%9D%E8%80%83/Users\fango\AppData\Roaming\Typora\typora-user-images\image-20220505160434827.png" alt="image-20220505160434827"></p>
+<p>存在问题的解析场景：</p>
+<p>当LDNS存在CNAME缓存时，不会在向abc.com的权威DNS发起解析查询的动作，而是会根据CNAME的域名向其他权威DNS进行查询。 </p>
+<p><img src="/2022/05/08/MX&CNAME%E8%AE%B0%E5%BD%95%E5%86%B2%E7%AA%81%E9%97%AE%E9%A2%98%E6%80%9D%E8%80%83/Users\fango\AppData\Roaming\Typora\typora-user-images\image-20220505160718812.png" alt="image-20220505160718812"></p>
+<p>如果CNAME后域名所在的权威DNS上没有该域名的MX记录，则会导致MX记录解析失败。</p>
+<h1 id="优化办法"><a href="#优化办法" class="headerlink" title="优化办法"></a>优化办法</h1><h2 id="域名配置层面规避"><a href="#域名配置层面规避" class="headerlink" title="域名配置层面规避"></a>域名配置层面规避</h2><h3 id="取消CNAME"><a href="#取消CNAME" class="headerlink" title="取消CNAME"></a>取消CNAME</h3><p> 即将域名的CNAME解析记录停止，重新配置A记录指向CDN加速节点或者安全站点，配置如下：</p>
+<p>DNS配置:</p>
+<table>
+<thead>
+<tr>
+<th>主机记录</th>
+<th>记录类型</th>
+<th>记录值</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>@</td>
+<td>MX</td>
+<td>mxbiz1.qq.com.</td>
+</tr>
+<tr>
+<td><del>@</del></td>
+<td><del>CNAME</del></td>
+<td><del>abc.com.wscdns.com.</del></td>
+</tr>
+<tr>
+<td>@</td>
+<td>A</td>
+<td>&lt;CDN节点&#x2F;安全站点&gt;</td>
+</tr>
+</tbody></table>
+<h4 id="优势-amp-风险评估"><a href="#优势-amp-风险评估" class="headerlink" title="优势&amp;风险评估"></a>优势&amp;风险评估</h4><p>优势：如果CNAME后域名指向的IP较为固定，且CNAME后域名没有智能解析的策略，可以直接使用这种方式，较为简单和快速。</p>
+<p>风险：由于CDN节点一般在各省&#x2F;各国家&#x2F;各大洲的解析均不相同，且可能根据用户来源进行智能解析，所以直接更改为A记录的方案可能引发一系列问题。  </p>
+<h3 id="CNAME后域名配置MX"><a href="#CNAME后域名配置MX" class="headerlink" title="CNAME后域名配置MX"></a>CNAME后域名配置MX</h3><p>已知目前的abc.com权威DNS域配置如下：</p>
+<table>
+<thead>
+<tr>
+<th>主机记录</th>
+<th>记录类型</th>
+<th>记录值</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>@</td>
+<td>MX</td>
+<td>mxbiz1.qq.com.</td>
+</tr>
+<tr>
+<td>@</td>
+<td>CNAME</td>
+<td>abc.com.wscdns.com.</td>
+</tr>
+</tbody></table>
+<p>结合“风险技术细节推导”章节——存在问题的解析场景可知，LDNS会再根据CNAME的域名向其他权威DNS查询MX记录，那么只需要将CNAME后的域名配置MX记录也可解决该问题：</p>
+<p>那么在wscdns.com.权威域增加如下MX记录配置（CNAME后域名所属权威域）：</p>
+<table>
+<thead>
+<tr>
+<th>主机记录</th>
+<th>记录类型</th>
+<th>记录值</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>abc.com</td>
+<td>A</td>
+<td>&lt;CDN资源节点ip&gt;</td>
+</tr>
+<tr>
+<td>abc.com（新增）</td>
+<td>MX（新增）</td>
+<td>mxbiz1.qq.com.（新增）</td>
+</tr>
+</tbody></table>
+<p>优化后的解析链路：</p>
+<p><img src="/2022/05/08/MX&CNAME%E8%AE%B0%E5%BD%95%E5%86%B2%E7%AA%81%E9%97%AE%E9%A2%98%E6%80%9D%E8%80%83/Users\fango\AppData\Roaming\Typora\typora-user-images\image-20220505170510998.png" alt="image-20220505170510998"></p>
+<h4 id="优势-amp-风险评估-1"><a href="#优势-amp-风险评估-1" class="headerlink" title="优势&amp;风险评估"></a>优势&amp;风险评估</h4><p>优势：可较为圆满的解决CNAME与A记录冲突的问题。</p>
+<p>风险：</p>
+<p>如果在abc.com域下的@域名MX记录发生变更，第三方CNAME域名所属的权威DNS没有随之更改，那么可能导致MX记录变更不完全生效的问题。</p>
+<p>第三方CNAME域名所属的权威DNS可能无法满足客户在CNAME后域名配置MX的需求，从而导致该种方案无法实施</p>
+<p>如果多个子域名配置了相同的第三方CNAME域名，在针对三方CNAME域名配置MX前，需要考虑多个子域名<strong>现在</strong>及未来是否存在&#x2F;新增MX记录，避免影响其他子域名的MX记录导致相关风险。</p>
+<h2 id="权威DNS应答机制优化"><a href="#权威DNS应答机制优化" class="headerlink" title="权威DNS应答机制优化"></a>权威DNS应答机制优化</h2><h3 id="CNAME“拉平”"><a href="#CNAME“拉平”" class="headerlink" title="CNAME“拉平”"></a>CNAME“拉平”</h3><p>这里假设CNAME前和CNAME后的域名全部都在一个权威DNS集群上进行解析，那么通过该种技术方案可避免CNAME记录被其他DNS请求到，具体实现细节如下：</p>
+<p><img src="/2022/05/08/MX&CNAME%E8%AE%B0%E5%BD%95%E5%86%B2%E7%AA%81%E9%97%AE%E9%A2%98%E6%80%9D%E8%80%83/Users\fango\AppData\Roaming\Typora\typora-user-images\image-20220505161930305.png" alt="image-20220505161930305"></p>
+<p>（权威DNS集群省略了应答CNAME的步骤，避免CNAME记录被递归DNS解析到）</p>
+<p>前提：</p>
+<p>CNAME前后域名必须均在同一个DNS权威集群</p>
+<p>DNS权威集群需要支持“CNAME拉平”功能</p>
+<p>可参考如下DNSPOD相关文档链接：：</p>
+<blockquote>
+<p>CNAME 和 MX 记录冲突的解决？：<a target="_blank" rel="noopener" href="https://docs.dnspod.cn/dns/dns-resolve-set/">https://docs.dnspod.cn/dns/dns-resolve-set/</a></p>
+<p>DNSPOD-CNAME加速：<a target="_blank" rel="noopener" href="https://docs.dnspod.cn/dns/cname-speed/">https://docs.dnspod.cn/dns/cname-speed/</a></p>
+</blockquote>
+<h4 id="优势-amp-风险评估-2"><a href="#优势-amp-风险评估-2" class="headerlink" title="优势&amp;风险评估"></a>优势&amp;风险评估</h4><p>优势：可以省略回复CNAME记录、直接应答A记录，加快解析速度，避免CNAME&amp;MX在递归DNS产生冲突问题</p>
+<p>风险：如果有中间人向LDNS发起CNAME记录解析请求，使递归DNS强制缓存CNAME记录，那么可能导致邮件收发失败。</p>
+<h1 id="最佳实践探索"><a href="#最佳实践探索" class="headerlink" title="最佳实践探索"></a>最佳实践探索</h1><p>如果不能取消CNAME，以及权威DNS应答机制无法优化的情况下，建议使用“CNAME后域名配置MX”方案</p>
+<p>虽然会存在一定的风险，但是这是在违反RFC标准下能够避免风险的”最佳实践探索“。</p>
+<h2 id="引用参考"><a href="#引用参考" class="headerlink" title="引用参考"></a>引用参考</h2><p>技术文章：RFC1034</p>
+<p>技术顾问：姜凤波</p>
+
+    </div>
+
+    
+    
+    
+        
+
+<div>
+<ul class="post-copyright">
+  <li class="post-copyright-author">
+    <strong>本文作者： </strong>Fango
+  </li>
+  <li class="post-copyright-link">
+    <strong>本文链接：</strong>
+    <a href="https://www.abchina.space/2022/05/08/MX&CNAME%E8%AE%B0%E5%BD%95%E5%86%B2%E7%AA%81%E9%97%AE%E9%A2%98%E6%80%9D%E8%80%83/" title="MX&amp;CNAME记录冲突问题探究">https://www.abchina.space/2022/05/08/MX&CNAME记录冲突问题思考/</a>
+  </li>
+  <li class="post-copyright-license">
+    <strong>版权声明： </strong>本博客所有文章除特别声明外，均采用 <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/" rel="noopener" target="_blank"><i class="fab fa-fw fa-creative-commons"></i>BY-NC-SA</a> 许可协议。转载请注明出处！
+  </li>
+</ul>
+</div>
+
+
+      <footer class="post-footer">
+
+        
+
+
+        
+    <div class="post-nav">
+      <div class="post-nav-item">
+    <a href="/2022/03/15/%E6%B5%85%E6%9E%90DNS%E8%A7%A3%E6%9E%90%E6%9D%83%E9%87%8D/" rel="prev" title="浅析DNS解析权重">
+      <i class="fa fa-chevron-left"></i> 浅析DNS解析权重
+    </a></div>
+      <div class="post-nav-item"></div>
+    </div>
+      </footer>
+    
+  </article>
+  
+  
+  
+
+
+
+          </div>
+          
+    <div class="comments" id="valine-comments"></div>
+
+<script>
+  window.addEventListener('tabs:register', () => {
+    let { activeClass } = CONFIG.comments;
+    if (CONFIG.comments.storage) {
+      activeClass = localStorage.getItem('comments_active') || activeClass;
+    }
+    if (activeClass) {
+      let activeTab = document.querySelector(`a[href="#comment-${activeClass}"]`);
+      if (activeTab) {
+        activeTab.click();
+      }
+    }
+  });
+  if (CONFIG.comments.storage) {
+    window.addEventListener('tabs:click', event => {
+      if (!event.target.matches('.tabs-comment .tab-content .tab-pane')) return;
+      let commentClass = event.target.classList[1];
+      localStorage.setItem('comments_active', commentClass);
+    });
+  }
+</script>
+
+        </div>
+          
+  
+  <div class="toggle sidebar-toggle">
+    <span class="toggle-line toggle-line-first"></span>
+    <span class="toggle-line toggle-line-middle"></span>
+    <span class="toggle-line toggle-line-last"></span>
+  </div>
+
+  <aside class="sidebar">
+    <div class="sidebar-inner">
+
+      <ul class="sidebar-nav motion-element">
+        <li class="sidebar-nav-toc">
+          文章目录
+        </li>
+        <li class="sidebar-nav-overview">
+          站点概览
+        </li>
+      </ul>
+
+      <!--noindex-->
+      <div class="post-toc-wrap sidebar-panel">
+          <div class="post-toc motion-element"><ol class="nav"><li class="nav-item nav-level-1"><a class="nav-link" href="#%E5%89%8D%E8%A8%80%EF%BC%9A"><span class="nav-number">1.</span> <span class="nav-text">前言：</span></a></li><li class="nav-item nav-level-1"><a class="nav-link" href="#%E9%97%AE%E9%A2%98%E8%83%8C%E6%99%AF"><span class="nav-number">2.</span> <span class="nav-text">问题背景</span></a><ol class="nav-child"><li class="nav-item nav-level-2"><a class="nav-link" href="#%E4%B8%BB%E8%A6%81%E9%9C%80%E6%B1%82-amp-DNS%E5%AE%9E%E7%8E%B0"><span class="nav-number">2.1.</span> <span class="nav-text">主要需求&amp;DNS实现</span></a></li><li class="nav-item nav-level-2"><a class="nav-link" href="#DNS%E6%8A%80%E6%9C%AF%E5%AE%9E%E7%8E%B0%E9%A3%8E%E9%99%A9%E6%8F%AD%E7%A4%BA"><span class="nav-number">2.2.</span> <span class="nav-text">DNS技术实现风险揭示</span></a><ol class="nav-child"><li class="nav-item nav-level-3"><a class="nav-link" href="#%E8%BF%9D%E5%8F%8D%E7%9A%84RFC%E8%AF%B4%E6%98%8E"><span class="nav-number">2.2.1.</span> <span class="nav-text">违反的RFC说明</span></a></li><li class="nav-item nav-level-3"><a class="nav-link" href="#%E9%A3%8E%E9%99%A9%E6%8A%80%E6%9C%AF%E7%BB%86%E8%8A%82%E6%8E%A8%E5%AF%BC"><span class="nav-number">2.2.2.</span> <span class="nav-text">风险技术细节推导</span></a></li></ol></li></ol></li><li class="nav-item nav-level-1"><a class="nav-link" href="#%E4%BC%98%E5%8C%96%E5%8A%9E%E6%B3%95"><span class="nav-number">3.</span> <span class="nav-text">优化办法</span></a><ol class="nav-child"><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%9F%9F%E5%90%8D%E9%85%8D%E7%BD%AE%E5%B1%82%E9%9D%A2%E8%A7%84%E9%81%BF"><span class="nav-number">3.1.</span> <span class="nav-text">域名配置层面规避</span></a><ol class="nav-child"><li class="nav-item nav-level-3"><a class="nav-link" href="#%E5%8F%96%E6%B6%88CNAME"><span class="nav-number">3.1.1.</span> <span class="nav-text">取消CNAME</span></a><ol class="nav-child"><li class="nav-item nav-level-4"><a class="nav-link" href="#%E4%BC%98%E5%8A%BF-amp-%E9%A3%8E%E9%99%A9%E8%AF%84%E4%BC%B0"><span class="nav-number">3.1.1.1.</span> <span class="nav-text">优势&amp;风险评估</span></a></li></ol></li><li class="nav-item nav-level-3"><a class="nav-link" href="#CNAME%E5%90%8E%E5%9F%9F%E5%90%8D%E9%85%8D%E7%BD%AEMX"><span class="nav-number">3.1.2.</span> <span class="nav-text">CNAME后域名配置MX</span></a><ol class="nav-child"><li class="nav-item nav-level-4"><a class="nav-link" href="#%E4%BC%98%E5%8A%BF-amp-%E9%A3%8E%E9%99%A9%E8%AF%84%E4%BC%B0-1"><span class="nav-number">3.1.2.1.</span> <span class="nav-text">优势&amp;风险评估</span></a></li></ol></li></ol></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E6%9D%83%E5%A8%81DNS%E5%BA%94%E7%AD%94%E6%9C%BA%E5%88%B6%E4%BC%98%E5%8C%96"><span class="nav-number">3.2.</span> <span class="nav-text">权威DNS应答机制优化</span></a><ol class="nav-child"><li class="nav-item nav-level-3"><a class="nav-link" href="#CNAME%E2%80%9C%E6%8B%89%E5%B9%B3%E2%80%9D"><span class="nav-number">3.2.1.</span> <span class="nav-text">CNAME“拉平”</span></a><ol class="nav-child"><li class="nav-item nav-level-4"><a class="nav-link" href="#%E4%BC%98%E5%8A%BF-amp-%E9%A3%8E%E9%99%A9%E8%AF%84%E4%BC%B0-2"><span class="nav-number">3.2.1.1.</span> <span class="nav-text">优势&amp;风险评估</span></a></li></ol></li></ol></li></ol></li><li class="nav-item nav-level-1"><a class="nav-link" href="#%E6%9C%80%E4%BD%B3%E5%AE%9E%E8%B7%B5%E6%8E%A2%E7%B4%A2"><span class="nav-number">4.</span> <span class="nav-text">最佳实践探索</span></a><ol class="nav-child"><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%BC%95%E7%94%A8%E5%8F%82%E8%80%83"><span class="nav-number">4.1.</span> <span class="nav-text">引用参考</span></a></li></ol></li></ol></div>
+      </div>
+      <!--/noindex-->
+
+      <div class="site-overview-wrap sidebar-panel">
+        <div class="site-author motion-element" itemprop="author" itemscope itemtype="http://schema.org/Person">
+    <img class="site-author-image" itemprop="image" alt="Fango"
+      src="/images/cat.jpg">
+  <p class="site-author-name" itemprop="name">Fango</p>
+  <div class="site-description" itemprop="description">Books are the ladder of human progress</div>
+</div>
+<div class="site-state-wrap motion-element">
+  <nav class="site-state">
+      <div class="site-state-item site-state-posts">
+          <a href="/archives/">
+        
+          <span class="site-state-item-count">3</span>
+          <span class="site-state-item-name">日志</span>
+        </a>
+      </div>
+  </nav>
+</div>
+  <div class="links-of-author motion-element">
+      <span class="links-of-author-item">
+        <a href="https://github.com/Fan-Code-World" title="GitHub → https:&#x2F;&#x2F;github.com&#x2F;Fan-Code-World" rel="noopener" target="_blank"><i class="fab fa-github fa-fw"></i>GitHub</a>
+      </span>
+      <span class="links-of-author-item">
+        <a href="mailto:1312464863@qq.com" title="E-Mail → mailto:1312464863@qq.com" rel="noopener" target="_blank"><i class="fa fa-envelope fa-fw"></i>E-Mail</a>
+      </span>
+  </div>
+  <div class="cc-license motion-element" itemprop="license">
+    <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/" class="cc-opacity" rel="noopener" target="_blank"><img src="/images/cc-by-nc-sa.svg" alt="Creative Commons"></a>
+  </div>
+
+
+
+      </div>
+
+    </div>
+  </aside>
+  <div id="sidebar-dimmer"></div>
+
+
+      </div>
+    </main>
+
+    <footer class="footer">
+      <div class="footer-inner">
+        
+
+        
+
+<div class="copyright">
+  
+  &copy; 
+  <span itemprop="copyrightYear">2022</span>
+  <span class="with-love">
+    <i class="fa fa-heart"></i>
+  </span>
+  <span class="author" itemprop="copyrightHolder">Fango</span>
+</div>
+  <div class="powered-by">由 <a href="https://hexo.io/" class="theme-link" rel="noopener" target="_blank">Hexo</a> & <a href="https://theme-next.org/" class="theme-link" rel="noopener" target="_blank">NexT.Gemini</a> 强力驱动
+  </div>
+  <div>
+  	<a target="_blank" rel="noopener" href="https://beian.miit.gov.cn/">鄂ICP备2021018930号  </a> 
+	<img src="/images/beian_logo.png" style="display:inline-block;text-decoration:none;height:13px;" />
+	</div>
+
+        
+
+
+
+
+
+
+
+
+      </div>
+    </footer>
+  </div>
+
+  
+  <script src="/lib/anime.min.js"></script>
+  <script src="//cdn.jsdelivr.net/npm/jquery@3/dist/jquery.min.js"></script>
+  <script src="//cdn.jsdelivr.net/gh/fancyapps/fancybox@3/dist/jquery.fancybox.min.js"></script>
+  <script src="/lib/velocity/velocity.min.js"></script>
+  <script src="/lib/velocity/velocity.ui.min.js"></script>
+
+<script src="/js/utils.js"></script>
+
+<script src="/js/motion.js"></script>
+
+
+<script src="/js/schemes/pisces.js"></script>
+
+
+<script src="/js/next-boot.js"></script>
+
+
+
+
+  
+
+
+
+
+  
+<script src="/js/local-search.js"></script>
+
+
+
+
+
+
+
+
+
+
+
+
+
+  
+
+  
+
+
+<script>
+NexT.utils.loadComments(document.querySelector('#valine-comments'), () => {
+  NexT.utils.getScript('//unpkg.com/valine/dist/Valine.min.js', () => {
+    var GUEST = ['nick', 'mail', 'link'];
+    var guest = 'nick,mail,link';
+    guest = guest.split(',').filter(item => {
+      return GUEST.includes(item);
+    });
+    new Valine({
+      el         : '#valine-comments',
+      verify     : false,
+      notify     : false,
+      appId      : 'S7gHxwn3hzgNqg9RJXKGGVOT-gzGzoHsz',
+      appKey     : 'Vlnh0ImrmH9SyDworxUyaksq',
+      placeholder: "Just go go",
+      avatar     : 'mm',
+      meta       : guest,
+      pageSize   : '10' || 10,
+      visitor    : true,
+      lang       : '' || 'zh-cn',
+      path       : location.pathname,
+      recordIP   : false,
+      serverURLs : ''
+    });
+  }, window.Valine);
+});
+</script>
+
+</body>
+</html>
